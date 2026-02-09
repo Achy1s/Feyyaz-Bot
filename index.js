@@ -9,12 +9,8 @@ const {
     REST,
     Routes,
     SlashCommandBuilder,
-    MessageFlags // Yeni eklenen bayraklar için
 } = require("discord.js");
-const { joinVoiceChannel, generateDependencyReport } = require("@discordjs/voice");
-
-// Ses bağımlılık raporunu loglara yazdır (Hata ayıklama için faydalıdır)
-console.log(generateDependencyReport());
+const { joinVoiceChannel } = require("@discordjs/voice");
 
 const client = new Client({
     intents: [
@@ -22,6 +18,8 @@ const client = new Client({
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        // HIZLANDIRMA 1: Etkinlikleri önbelleğe almak için bu izni ekledik
+        GatewayIntentBits.GuildScheduledEvents, 
     ],
 });
 
@@ -37,16 +35,15 @@ const GUILD_ID = "751507503816376421";
 const beklemeSirasi = new Map(); 
 const reddedilenler = new Set(); 
 
-// --- YARDIMCI FONKSİYONLAR ---
+// --- OPTİMİZE EDİLMİŞ YARDIMCI FONKSİYONLAR ---
 
-async function aktifEtkinlikVarMi(guild) {
-    const etkinlikler = await guild.scheduledEvents.fetch();
-    return etkinlikler.some((event) => event.status === 2); 
+// HIZLANDIRMA 2: Fetch yerine Cache kullanıyoruz (Await kaldırıldı)
+function aktifEtkinlikVarMi(guild) {
+    return guild.scheduledEvents.cache.some((event) => event.status === 2); // 2: ACTIVE
 }
 
-async function aktifEtkinlikKanaliBul(guild) {
-    const etkinlikler = await guild.scheduledEvents.fetch();
-    const aktifEtkinlik = etkinlikler.find(event => event.status === 2); 
+function aktifEtkinlikKanaliBul(guild) {
+    const aktifEtkinlik = guild.scheduledEvents.cache.find(event => event.status === 2); 
     if (aktifEtkinlik && aktifEtkinlik.channelId) {
         return aktifEtkinlik.channelId;
     }
@@ -54,7 +51,7 @@ async function aktifEtkinlikKanaliBul(guild) {
 }
 
 async function rolleriTemizle(guild) {
-    const etkinlikAktif = await aktifEtkinlikVarMi(guild);
+    const etkinlikAktif = aktifEtkinlikVarMi(guild); // Await yok
     if (!etkinlikAktif) {
         if (reddedilenler.size > 0) {
             reddedilenler.clear();
@@ -62,37 +59,53 @@ async function rolleriTemizle(guild) {
         }
         const rol = guild.roles.cache.get(ETKINLIK_BILETI_ID);
         if (!rol) return;
-        rol.members.forEach(async (member) => {
-            try {
-                await member.roles.remove(rol);
-            } catch (e) {
-                console.error("Rol temizleme hatası:", e);
-            }
+        
+        // Hızlandırma: Rolleri tek tek değil, Promise.all ile paralel alıyoruz (eğer çok kişi varsa)
+        // Ancak rol silme API limitine takılabileceği için basit döngü kalabilir, fakat try-catch hızlandırıldı.
+        rol.members.forEach((member) => {
+            member.roles.remove(rol).catch(e => console.error("Rol silinemedi:", e.message));
         });
     }
 }
 
+// HIZLANDIRMA 3: Sırayı güncellerken herkesi aynı anda güncelle (Paralel İşlem)
 async function sirayiGuncelle(guild) {
-    const hedefKanalId = await aktifEtkinlikKanaliBul(guild);
+    const hedefKanalId = aktifEtkinlikKanaliBul(guild); // Await yok
     const kanal = guild.channels.cache.get(hedefKanalId);
 
     if (!kanal) return;
 
     let index = 1;
+    const guncellemeIslemleri = []; // Promise dizisi
+
     for (const [userId, data] of beklemeSirasi) {
-        try {
-            const msg = await kanal.messages.fetch(data.mesajId).catch(() => null);
-            if (msg && msg.embeds[0]) {
-                const yeniEmbed = EmbedBuilder.from(msg.embeds[0])
-                    .setDescription(
-                        `**${msg.embeds[0].author.name}** bekleme odasında.\n\n🔢 **Sıra Numarası:** #${index}\n⏱ **Giriş:** <t:${Math.floor(data.joinTime / 1000)}:R>`,
-                    )
-                    .setFooter({ text: `Şu an sırada toplam ${beklemeSirasi.size} kişi var.` });
-                await msg.edit({ embeds: [yeniEmbed] });
+        const siraNo = index++; // Closure için kopyala
+        
+        // İşlemi hemen başlat ama await etme, diziye at
+        const islem = (async () => {
+            try {
+                // Mesajı önce cache'de ara, yoksa fetch et
+                let msg = kanal.messages.cache.get(data.mesajId);
+                if (!msg) msg = await kanal.messages.fetch(data.mesajId).catch(() => null);
+
+                if (msg && msg.embeds[0]) {
+                    const yeniEmbed = EmbedBuilder.from(msg.embeds[0])
+                        .setDescription(
+                            `**${msg.embeds[0].author.name}** bekleme odasında.\n\n🔢 **Sıra Numarası:** #${siraNo}\n⏱ **Giriş:** <t:${Math.floor(data.joinTime / 1000)}:R>`,
+                        )
+                        .setFooter({ text: `Şu an sırada toplam ${beklemeSirasi.size} kişi var.` });
+                    await msg.edit({ embeds: [yeniEmbed] });
+                }
+            } catch (e) {
+                // Hata olursa sessizce geç, sistemi kilitleme
             }
-        } catch (e) {}
-        index++;
+        })();
+        
+        guncellemeIslemleri.push(islem);
     }
+
+    // Tüm mesajları aynı anda güncelle
+    await Promise.all(guncellemeIslemleri);
 }
 
 function botSesliKanalaKatil() {
@@ -109,7 +122,7 @@ function botSesliKanalaKatil() {
     } catch (e) {}
 }
 
-// --- SLASH KOMUTLARI YÜKLEME ---
+// --- SLASH KOMUTLARI ---
 const commands = [
     new SlashCommandBuilder().setName("red-kaldir").setDescription("Reddedilen birinin engelini kaldırır.").addUserOption(o => o.setName("kullanici").setDescription("Üye").setRequired(true)),
     new SlashCommandBuilder().setName("red-listesi").setDescription("Reddedilen kullanıcıları gösterir."),
@@ -125,35 +138,46 @@ const rest = new REST({ version: "10" }).setToken(TOKEN);
 
 // --- EVENTLER ---
 
-// UYARI GÜNCELLEMESİ: 'ready' yerine 'clientReady' kullanımı v15 uyumluluğu sağlar
-client.once("ready", () => { 
-    console.log(`🚀 ${client.user.tag} Amazon AWS üzerinde 7/24 aktif!`);
+client.once("ready", async () => {
+    console.log(`${client.user.tag} hazır!`);
+    
+    // İlk açılışta cache'i doldurmak için bir kere fetch yapıyoruz
+    const guild = client.guilds.cache.get(GUILD_ID);
+    if (guild) {
+        await guild.scheduledEvents.fetch().catch(() => {});
+        console.log("📅 Etkinlik önbelleği (cache) oluşturuldu.");
+    }
+
     botSesliKanalaKatil();
+    
     setInterval(async () => {
-        const guild = client.guilds.cache.get(GUILD_ID);
-        if (guild) await rolleriTemizle(guild);
+        if (guild) {
+             // Arka planda ara sıra cache tazele
+            await guild.scheduledEvents.fetch().catch(() => {});
+            await rolleriTemizle(guild);
+        }
     }, 60000);
 });
 
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const yetkiliMi = interaction.member.roles.cache.some(r => YETKILI_ROLLERI.includes(r.id));
-    if (!yetkiliMi) return interaction.reply({ content: "Yetkiniz yok!", flags: [MessageFlags.Ephemeral] });
+    if (!yetkiliMi) return interaction.reply({ content: "Yetkiniz yok!", ephemeral: true });
 
     if (interaction.commandName === "red-kaldir") {
         const user = interaction.options.getUser("kullanici");
         if (reddedilenler.has(user.id)) {
             reddedilenler.delete(user.id);
-            await interaction.reply({ content: `✅ **${user.tag}** engeli kaldırıldı.`, flags: [MessageFlags.Ephemeral] });
+            await interaction.reply({ content: `✅ **${user.tag}** engeli kaldırıldı.`, ephemeral: true });
         } else {
-            await interaction.reply({ content: "Bu kullanıcı listede değil.", flags: [MessageFlags.Ephemeral] });
+            await interaction.reply({ content: "Bu kullanıcı listede değil.", ephemeral: true });
         }
     }
 
     if (interaction.commandName === "red-listesi") {
-        if (reddedilenler.size === 0) return interaction.reply({ content: "Liste boş.", flags: [MessageFlags.Ephemeral] });
+        if (reddedilenler.size === 0) return interaction.reply({ content: "Liste boş.", ephemeral: true });
         const embed = new EmbedBuilder().setTitle("🚫 Red Listesi").setDescription(Array.from(reddedilenler).map(id => `<@${id}>`).join("\n")).setColor("Red");
-        await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 });
 
@@ -165,9 +189,11 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
         return setTimeout(() => botSesliKanalaKatil(), 5000);
     }
 
+    // BEKLEME ODASINA GİRİŞ
     if (newState.channelId === BEKLEME_ODASI_ID && oldState.channelId !== BEKLEME_ODASI_ID) {
         const guild = newState.guild;
-        const aktifMi = await aktifEtkinlikVarMi(guild);
+        // Cache'den kontrol (HIZLI)
+        const aktifMi = aktifEtkinlikVarMi(guild);
 
         if (!aktifMi) {
             try {
@@ -187,7 +213,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
         }
 
         if (user.roles.cache.has(ETKINLIK_BILETI_ID)) {
-            const hedefKanalId = await aktifEtkinlikKanaliBul(guild);
+            const hedefKanalId = aktifEtkinlikKanaliBul(guild); // Await yok
             try { return await user.voice.setChannel(hedefKanalId); } catch (e) {}
         }
 
@@ -206,7 +232,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
             .setDescription(`**${user.user.username}** bekleme odasına girdi.\n\n🔢 **Sıra:** #${beklemeSirasi.size}\n⏱ **Giriş:** <t:${Math.floor(simdi / 1000)}:R>`)
             .setFooter({ text: `Etkinlik Odası için ${beklemeSirasi.size} kişi sırada.` });
 
-        const hedefKanalId = await aktifEtkinlikKanaliBul(guild);
+        const hedefKanalId = aktifEtkinlikKanaliBul(guild); // Await yok
         const logKanal = guild.channels.cache.get(hedefKanalId);
 
         if (logKanal) {
@@ -222,57 +248,72 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
 
             collector.on("collect", async (i) => {
                 const yetkili = i.member.roles.cache.some(r => YETKILI_ROLLERI.includes(r.id));
-                if (!yetkili) return i.reply({ content: "Yetkiniz yok.", flags: [MessageFlags.Ephemeral] });
+                if (!yetkili) return i.reply({ content: "Yetkiniz yok.", ephemeral: true });
 
-                // ÇÖZÜM: deferUpdate() butonun "Düşünüyor..." takılmasını anında çözer
-                await i.deferUpdate();
+                // HIZLANDIRMA 4: DeferReply ile etkileşimi bekletmeden API'ye "aldım" diyoruz
+                await i.deferReply({ ephemeral: true });
 
-                const currentHedefId = await aktifEtkinlikKanaliBul(i.guild);
+                const hedefKanalId = aktifEtkinlikKanaliBul(i.guild); // Await yok
 
                 if (i.customId.startsWith("onay_")) {
                     beklemeSirasi.delete(user.id);
-                    await sirayiGuncelle(i.guild);
+                    
+                    // İşlemleri paralel yap
+                    const updateQueue = sirayiGuncelle(i.guild);
+                    const userProcess = (async () => {
+                         try {
+                            const rol = i.guild.roles.cache.get(ETKINLIK_BILETI_ID);
+                            if (rol) await user.roles.add(rol);
+                            await user.voice.setChannel(hedefKanalId);
+                            await logMsg.delete().catch(() => {});
+                         } catch(e) { throw e; }
+                    })();
+
                     try {
-                        const rol = i.guild.roles.cache.get(ETKINLIK_BILETI_ID);
-                        if (rol) await user.roles.add(rol);
-                        await user.voice.setChannel(currentHedefId);
-                        
-                        // Yetkiliye işlem onayı
-                        await i.followUp({ content: `✅ ${user.user.tag} içeri alındı.`, flags: [MessageFlags.Ephemeral] });
-                        await logMsg.delete().catch(() => {});
-                    } catch (e) { 
-                        await i.followUp({ content: "Hata oluştu, kullanıcı odadan çıkmış olabilir.", flags: [MessageFlags.Ephemeral] }); 
+                        await Promise.all([updateQueue, userProcess]);
+                        await i.editReply({ content: `✅ ${user.user.tag} içeri alındı.` });
+                    } catch (e) {
+                        await i.editReply({ content: "Hata oluştu, kullanıcı odadan çıkmış olabilir." });
                     }
                 }
 
                 if (i.customId.startsWith("red_")) {
                     reddedilenler.add(user.id);
                     beklemeSirasi.delete(user.id);
-                    await sirayiGuncelle(i.guild);
+
+                    const updateQueue = sirayiGuncelle(i.guild);
+                    const userProcess = (async () => {
+                        try {
+                            await user.voice.disconnect();
+                            await logMsg.delete().catch(() => {});
+                        } catch(e) { throw e; }
+                    })();
+
                     try {
-                        await user.voice.disconnect();
-                        await i.followUp({ content: `❌ ${user.user.tag} reddedildi.`, flags: [MessageFlags.Ephemeral] });
-                        await logMsg.delete().catch(() => {});
-                    } catch (e) {
-                        await i.followUp({ content: "İşlem tamamlanamadı.", flags: [MessageFlags.Ephemeral] });
+                        await Promise.all([updateQueue, userProcess]);
+                        await i.editReply({ content: `❌ ${user.user.tag} reddedildi.` });
+                    } catch(e) {
+                         await i.editReply({ content: "İşlem tamamlanamadı." });
                     }
                 }
             });
         }
     }
 
+    // BEKLEME ODASINDAN ÇIKIŞ TEMİZLİĞİ
     if (oldState.channelId === BEKLEME_ODASI_ID && newState.channelId !== BEKLEME_ODASI_ID) {
         const data = beklemeSirasi.get(user.id);
         if (data) {
-            const currentHedefId = await aktifEtkinlikKanaliBul(newState.guild);
-            const logKanal = newState.guild.channels.cache.get(currentHedefId);
+            const hedefKanalId = aktifEtkinlikKanaliBul(newState.guild); // Await yok
+            const logKanal = newState.guild.channels.cache.get(hedefKanalId);
 
             if (logKanal && data.mesajId) {
-                const msg = await logKanal.messages.fetch(data.mesajId).catch(() => null);
-                if (msg) await msg.delete().catch(() => {});
+                // Mesajı sil ama bekleme, fire-and-forget
+                logKanal.messages.fetch(data.mesajId).then(m => m.delete()).catch(() => {});
             }
             beklemeSirasi.delete(user.id);
-            await sirayiGuncelle(newState.guild);
+            // Sırayı güncelle ama bekleme
+            sirayiGuncelle(newState.guild).catch(() => {});
         }
     }
 });
