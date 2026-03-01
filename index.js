@@ -110,16 +110,27 @@ async function sirayiGuncelle(guild) {
 
 function botSesliKanalaKatil() {
     const kanal = client.channels.cache.get(BEKLEME_ODASI_ID);
-    if (!kanal) return;
+    if (!kanal) {
+        console.log("❌ Bekleme odası kanalı bulunamadı!");
+        return;
+    }
+    
     try {
-        joinVoiceChannel({
+        const connection = joinVoiceChannel({
             channelId: kanal.id,
             guildId: kanal.guild.id,
             adapterCreator: kanal.guild.voiceAdapterCreator,
             selfDeaf: true,
             selfMute: true,
         });
-    } catch (e) {}
+
+        connection.on('stateChange', (oldState, newState) => {
+            console.log(`🔊 Ses Durumu: ${oldState.status} -> ${newState.status}`);
+        });
+
+    } catch (e) {
+        console.error("❌ Ses kanalına bağlanırken hata oluştu:", e);
+    }
 }
 
 // --- SLASH KOMUTLARI ---
