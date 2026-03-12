@@ -194,11 +194,9 @@ client.on("interactionCreate", async (interaction) => {
 
     // --- YENİ EKLENEN: HARF VER KOMUTU ---
     if (interaction.commandName === "harf") {
-        // Türk alfabesi (Ğ ile başlayan kelime olmadığı için çıkarıldı)
-        const alfabe = ["A", "B", "C", "Ç", "D", "E", "F", "G", "H", "I", "İ", "J", "K", "L", "M", "N", "O", "Ö", "P", "R", "S", "Ş", "T", "U", "Ü", "V", "Y", "Z"];
+        const alfabe = ["A", "B", "C", "Ç", "D", "E", "F", "G", "H", "I", "İ", "K", "L", "M", "N", "O", "P", "R", "S", "Ş", "T", "U", "V", "Y", "Z"];
         const rastgeleHarf = alfabe[Math.floor(Math.random() * alfabe.length)];
 
-        // Zaten yazdığın mükemmel fonksiyonu kullanarak etkinlik kanalını buluyoruz
         const hedefKanalId = aktifEtkinlikKanaliBul(interaction.guild); 
         const hedefKanal = interaction.guild.channels.cache.get(hedefKanalId);
 
