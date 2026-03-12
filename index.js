@@ -137,6 +137,7 @@ function botSesliKanalaKatil() {
 const commands = [
     new SlashCommandBuilder().setName("red-kaldir").setDescription("Reddedilen birinin engelini kaldırır.").addUserOption(o => o.setName("kullanici").setDescription("Üye").setRequired(true)),
     new SlashCommandBuilder().setName("red-listesi").setDescription("Reddedilen kullanıcıları gösterir."),
+    new SlashCommandBuilder().setName("harf").setDescription("İsim Şehir Hayvan oyunu için rastgele harf üretir ve kanala atar."),
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(TOKEN);
@@ -189,6 +190,41 @@ client.on("interactionCreate", async (interaction) => {
         if (reddedilenler.size === 0) return interaction.reply({ content: "Liste boş.", ephemeral: true });
         const embed = new EmbedBuilder().setTitle("🚫 Red Listesi").setDescription(Array.from(reddedilenler).map(id => `<@${id}>`).join("\n")).setColor("Red");
         await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    // --- YENİ EKLENEN: HARF VER KOMUTU ---
+    if (interaction.commandName === "harf-ver") {
+        // Türk alfabesi (Ğ ile başlayan kelime olmadığı için çıkarıldı)
+        const alfabe = ["A", "B", "C", "Ç", "D", "E", "F", "G", "H", "I", "İ", "J", "K", "L", "M", "N", "O", "Ö", "P", "R", "S", "Ş", "T", "U", "Ü", "V", "Y", "Z"];
+        const rastgeleHarf = alfabe[Math.floor(Math.random() * alfabe.length)];
+
+        // Zaten yazdığın mükemmel fonksiyonu kullanarak etkinlik kanalını buluyoruz
+        const hedefKanalId = aktifEtkinlikKanaliBul(interaction.guild); 
+        const hedefKanal = interaction.guild.channels.cache.get(hedefKanalId);
+
+        if (!hedefKanal) {
+            return interaction.reply({ content: "❌ Etkinlik kanalı bulunamadı!", ephemeral: true });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle("🎲 İsim Şehir Hayvan")
+            .setDescription(`Sıradaki harfimiz: **${rastgeleHarf}**\n\nHerkese başarılar! ⏳`)
+            .setColor("Random")
+            .setTimestamp();
+
+        try {
+            // Bilet rolünü etiketleyerek mesajı gönder
+            await hedefKanal.send({
+                content: `<@&${ETKINLIK_BILETI_ID}>`,
+                embeds: [embed]
+            });
+            
+            // Komutu kullanan yetkiliye başarılı olduğuna dair gizli mesaj gönder
+            await interaction.reply({ content: `✅ **${rastgeleHarf}** harfi başarıyla <#${hedefKanalId}> kanalına gönderildi.`, ephemeral: true });
+        } catch (error) {
+            console.error(error);
+            await interaction.reply({ content: "❌ Mesaj gönderilirken bir hata oluştu. Botun o kanalda yetkisi olduğundan emin olun.", ephemeral: true });
+        }
     }
 });
 
