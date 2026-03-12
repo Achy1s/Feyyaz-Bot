@@ -150,7 +150,7 @@ const rest = new REST({ version: "10" }).setToken(TOKEN);
 
 // --- EVENTLER ---
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
     console.log(`${client.user.tag} hazır!`);
     
     // İlk açılışta cache'i doldurmak için bir kere fetch yapıyoruz
