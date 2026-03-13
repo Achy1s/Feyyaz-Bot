@@ -260,9 +260,9 @@ client.on("interactionCreate", async (interaction) => {
                         bitisEmbed.setDescription(`Süre doldu! 📢\n\n**Harf:** **${rastgeleHarf}**`);
                         await anaMesaj.edit({ embeds: [bitisEmbed] }).catch(() => {});
 
-                        // Final Duyurusu
                         await hedefKanal.send({
-                            content: `🔔 <@&${ETKINLIK_BILETI_ID}> **MESAJLARINIZI YOLLAYIN!**`
+                            content: `🔔 <@&${ETKINLIK_BILETI_ID}> **MESAJLARINIZI YOLLAYIN!**`,
+                            allowedMentions: { roles: [ETKINLIK_BILETI_ID] }
                         });
                     }
                 }, 5000); // 5 saniyede bir mesajı günceller (Discord hız limitlerine takılmamak için)
