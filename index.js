@@ -192,7 +192,7 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    // --- YENİ EKLENEN: HARF VER KOMUTU ---
+    // --- GÜNCELLENEN: HARF VER KOMUTU (SAYAÇLI VE BUTONLU) ---
     if (interaction.commandName === "harf") {
         const alfabe = ["A", "B", "C", "Ç", "D", "E", "F", "G", "H", "I", "İ", "K", "L", "M", "N", "O", "P", "R", "S", "Ş", "T", "U", "V", "Y", "Z"];
         const rastgeleHarf = alfabe[Math.floor(Math.random() * alfabe.length)];
@@ -206,22 +206,71 @@ client.on("interactionCreate", async (interaction) => {
 
         const embed = new EmbedBuilder()
             .setTitle("🎲 İsim Şehir Hayvan")
-            .setDescription(`Sıradaki harfimiz: **${rastgeleHarf}**\n\nHerkese başarılar! ⏳`)
+            .setDescription(`Sıradaki harfimiz: **${rastgeleHarf}**\n\nHerkes kelimelerini hazırlasın. Bitiren aşağıdaki butona basabilir! ⏳`)
             .setColor("Random")
             .setTimestamp();
 
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("oyun_bitti")
+                .setLabel("Bitti!")
+                .setStyle(ButtonStyle.Primary)
+        );
+
         try {
-            // Bilet rolünü etiketleyerek mesajı gönder
-            await hedefKanal.send({
+            const anaMesaj = await hedefKanal.send({
                 content: `<@&${ETKINLIK_BILETI_ID}>`,
-                embeds: [embed]
+                embeds: [embed],
+                components: [row]
             });
             
-            // Komutu kullanan yetkiliye başarılı olduğuna dair gizli mesaj gönder
-            await interaction.reply({ content: `✅ **${rastgeleHarf}** harfi başarıyla <#${hedefKanalId}> kanalına gönderildi.`, ephemeral: true });
+            await interaction.reply({ content: `✅ **${rastgeleHarf}** harfi gönderildi.`, ephemeral: true });
+
+            // Buton Etkileşimi Dinleyici
+            const collector = anaMesaj.createMessageComponentCollector({ 
+                componentType: ComponentType.Button, 
+                time: 600000 // 10 dakika boyunca buton aktif kalabilir
+            });
+
+            collector.on("collect", async (i) => {
+                // Sadece Etkinlik Bileti rolü olanlar basabilir
+                if (!i.member.roles.cache.has(ETKINLIK_BILETI_ID)) {
+                    return i.reply({ content: "Bu butona sadece yarışmacılar basabilir!", ephemeral: true });
+                }
+
+                // Butona bir kez basıldığında collector'ı durdur ve süreci başlat
+                collector.stop();
+
+                let sure = 30;
+                const bitisEmbed = EmbedBuilder.from(anaMesaj.embeds[0])
+                    .setDescription(`**${i.user.username}** bitti dedi! 🚨\n\n⏱ **Süreniz Başladı:** **${sure}** saniye içinde mesajlar açılacak!`)
+                    .setColor("Red");
+
+                // İlk güncelleme: Butonu kaldır ve sayacı başlat
+                await i.update({ embeds: [bitisEmbed], components: [] });
+
+                const interval = setInterval(async () => {
+                    sure -= 5;
+                    if (sure > 0) {
+                        bitisEmbed.setDescription(`**${i.user.username}** bitti dedi! 🚨\n\n⏱ **Kalan Süre:** **${sure}** saniye!`);
+                        await anaMesaj.edit({ embeds: [bitisEmbed] }).catch(() => {});
+                    } else {
+                        clearInterval(interval);
+                        
+                        bitisEmbed.setDescription(`Süre doldu! 📢\n\n**Harf:** **${rastgeleHarf}**`);
+                        await anaMesaj.edit({ embeds: [bitisEmbed] }).catch(() => {});
+
+                        // Final Duyurusu
+                        await hedefKanal.send({
+                            content: `🔔 <@&${ETKINLIK_BILETI_ID}> **MESAJLARINIZI YOLLAYIN!**`
+                        });
+                    }
+                }, 5000); // 5 saniyede bir mesajı günceller (Discord hız limitlerine takılmamak için)
+            });
+
         } catch (error) {
             console.error(error);
-            await interaction.reply({ content: "❌ Mesaj gönderilirken bir hata oluştu. Botun o kanalda yetkisi olduğundan emin olun.", ephemeral: true });
+            if (!interaction.replied) await interaction.reply({ content: "❌ Bir hata oluştu.", ephemeral: true });
         }
     }
 });
