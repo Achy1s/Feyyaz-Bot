@@ -11,7 +11,7 @@ const client = new Client({
     ],
 });
 
-const TOKEN = "MTQ4NDI5NjI4NjA1MDk3NTg2NQ.GjZn__.K4S-1G5h5IcwB8l32nHctp-lhMXvxFjsIEYDE0.GBrfQM.wLFmh-uOHKJ3YQiog6vm_f6eAop495RlPFUKa4";
+const TOKEN = "MTQ4NDI5NjI4NjA1MDk3NTg2NQ.GjZn__.K4S-1G5h5IcwB8l32nHctp-lhMXvxFjsIEYDE0";
 // --- EVENTLER ---
 
 client.once("clientReady", async () => {
